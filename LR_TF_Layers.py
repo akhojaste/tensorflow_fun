@@ -39,13 +39,13 @@ class tf_FC(object):
         
         self._itr_per_epoch_train = x_train.shape[0] // self._batch_size
         
-        ### Validation dataset
-        val_ds = tf.data.Dataset.from_tensor_slices((x_test, y_test))
-        val_ds = val_ds.map(self._parse_fn).batch(self._batch_size)
+        ### testation dataset
+        test_ds = tf.data.Dataset.from_tensor_slices((x_test, y_test))
+        test_ds = test_ds.map(self._parse_fn).batch(32)
         
-        self._itr_per_epoch_valid = x_test.shape[0] // self._batch_size
+        self._itr_per_epoch_test = x_test.shape[0] // self._batch_size
 
-        return train_ds, val_ds
+        return train_ds, test_ds
 
     """
     Returns the logits of the network
@@ -64,32 +64,28 @@ class tf_FC(object):
     def fit(self):
         
         ### Dataset creation
-        train_ds, val_ds = self._create_dataset()
+        train_ds, test_ds = self._create_dataset()
         
-        train_itr = train_ds.make_one_shot_iterator()
-        image_train, label_train = train_itr.get_next()        
-        print('image_train.shape {}, label_train.shape {}'.format(image_train.get_shape(), label_train.get_shape()))
+        iter = tf.data.Iterator.from_structure(train_ds.output_types, train_ds.output_shapes)
         
-        val_itr = val_ds.make_one_shot_iterator()
-        image_val, label_val = val_itr.get_next()
-        print('image_val.shape {}, label_val.shape {}'.format(image_val.get_shape(), label_val.get_shape()))
+        train_init_op = iter.make_initializer(train_ds)
+        test_init_op = iter.make_initializer(test_ds)
         
+        image, label = iter.get_next()        
+        print('image_train.shape {}, label_train.shape {}'.format(image.get_shape(), label.get_shape()))
+        
+             
         ### Logits
-        self._logits = self._model_fc(image_train)
+        self._logits = self._model_fc(image)
         
         ### Loss and accuracy
-        self._loss= tf.losses.softmax_cross_entropy(label_train, self._logits)
+        self._loss= tf.losses.softmax_cross_entropy(label, self._logits)
         
-        true_pred  = tf.argmax(label_train, 1)
+        true_pred  = tf.argmax(label, 1)
         model_pred = tf.argmax(self._logits, 1)
         
         self._acc = tf.cast(tf.equal(true_pred, model_pred), tf.float32)
         self._acc = tf.reduce_mean(self._acc)
-        
-        ## Validation loss and accuracy
-        self._val_logits = self._model_fc(image_val)
-        self._val_loss   = tf.losses.softmax_cross_entropy(label_val, self._val_logits)
-        self._val_acc    = tf.reduce_mean(tf.cast( tf.equal(tf.argmax(label_val, 1), tf.argmax(self._val_logits, 1)) , tf.float32))
         
         ### Optimizer
         self._train_op = tf.train.AdamOptimizer(self._lr).minimize(self._loss)
@@ -103,44 +99,66 @@ class tf_FC(object):
         
         
         ### Summaries
-        tf.summary.scalar('cross_entropy', self._loss)
-        tf.summary.scalar('training_top1', self._acc)
-        tf.summary.scalar('val_loss', self._val_loss)
-        tf.summary.scalar('val_acc', self._val_acc)
-        merged_summaries = tf.summary.merge_all()
+        loss_summary = tf.summary.scalar('cross_entropy', self._loss)
+        top1_acc_summary = tf.summary.scalar('top1_acc', self._acc)
+        merged = tf.summary.merge([loss_summary, top1_acc_summary])
         
         train_writer = tf.summary.FileWriter('./train')
-        val_writer   = tf.summary.FileWriter('./val')
+        test_writer  = tf.summary.FileWriter('./test')
         
         ### Training loop
-        loss = []
-        count_train = 0 
-        count_val = 0
-        valid_every_epoch = 1
+        itr_train = 0 
+        itr_test = 0
+        test_every_epoch = 2
         
         for epoch in range(self._num_epoch):
+            
+            #Switch to train set
+            sess.run(train_init_op)
+            
             for itr in range(self._itr_per_epoch_train):
             
-                merged, _, _loss, acc, image, label = sess.run([merged_summaries, self._train_op, self._loss, self._acc, image_train, label_train])
+                _, _loss, acc, _image, _label, _summary = sess.run([self._train_op, self._loss, self._acc, image, label, merged])
             
-                train_writer.add_summary(merged, count_train)
-                count_train = count_train + 1
-            
-                ##self._loss_train[itr] = _loss
-                loss.append(_loss)
+                train_writer.add_summary(_summary, itr_train)
+                itr_train = itr_train + 1
+
                 if itr % 10 == 0:
                     print('Epoch: {0} Itr: {1} Loss:  {2:3.2f}, acc: {3:3.2f}'.format(epoch, itr, _loss, acc))
             
-            ##Validation every epoch
-            if epoch % valid_every_epoch == 0:
-                _loss, _acc = sess.run([self._val_loss, self._val_acc])
-                print('Epoch: {0}, Val loss:  {1:3.2f}, Val acc:  {2:3.2f}'.format(epoch, _loss, _acc))
-                val_writer.add_summary(merged, count_val)
-                count_val += 1
-        
-        loss = np.asanyarray(loss)
-        plt.plot(np.arange(loss.shape[0]), loss)
-        plt.show()
+            ##testation every epoch
+            if epoch % test_every_epoch == 0:
+                
+                #Switch to test set
+                sess.run(test_init_op)
+                test_loss = []
+                test_acc = []
+                
+                
+                while(True):
+                    
+                    try:
+                        _loss, _acc, _image, _label, _summary = sess.run([self._loss, self._acc, image, label, merged])
+                        
+                        test_writer.add_summary(_summary, itr_train)
+                        itr_test = itr_test + 1
+                        
+                        test_loss.append(_loss)
+                        test_acc.append(_acc)
+                    
+                    except tf.errors.OutOfRangeError:
+                        
+                        test_loss = np.asarray(test_loss)
+                        test_loss = np.mean(test_loss)
+                        
+                        test_acc = np.asarray(test_acc)
+                        test_acc = np.mean(test_acc)
+                        
+                        print('****Epoch: {0}, test loss:  {1:3.2f}, test acc:  {2:3.2f}'.format(epoch, test_loss, test_acc))
+                                                
+                        break
+                    
+    
         
 
 if __name__ == "__main__":

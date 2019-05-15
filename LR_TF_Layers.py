@@ -9,12 +9,15 @@ class tf_FC(object):
 
     def __init__(self):
         
-        self._lr = 0.01
-        self._batch_size = 60000
-        self._num_epoch = 100
+        self._lr = 0.001
+        self._batch_size = 512
+        self._num_epoch = 5
         
         self._loss_train = np.zeros([(10000 // self._batch_size) * self._num_epoch , 1])
 
+    """
+    Parsing function to take care of type casting and shape changing
+    """
 
     def _parse_fn(self, image, label):
         
@@ -25,7 +28,10 @@ class tf_FC(object):
         label = tf.one_hot(label, 10)
         
         return image, label
-
+    
+    """
+    Creating the training and testing dataset
+    """
     def _create_dataset(self):
         
         (x_train, y_train), (x_test, y_test) = mnist.load_data()
@@ -34,14 +40,14 @@ class tf_FC(object):
         ### Train dataset
         train_ds = tf.data.Dataset.from_tensor_slices((x_train, y_train))
         train_ds = train_ds.map(self._parse_fn)
-        train_ds = train_ds.shuffle(buffer_size=60000)
-        train_ds = train_ds.batch(self._batch_size).repeat(self._num_epoch)
+        train_ds = train_ds.shuffle(buffer_size=60000).repeat(self._num_epoch)
+        train_ds = train_ds.batch(self._batch_size)
         
         self._itr_per_epoch_train = x_train.shape[0] // self._batch_size
         
         ### testation dataset
         test_ds = tf.data.Dataset.from_tensor_slices((x_test, y_test))
-        test_ds = test_ds.map(self._parse_fn).batch(32)
+        test_ds = test_ds.map(self._parse_fn).batch(self._batch_size)
         
         self._itr_per_epoch_test = x_test.shape[0] // self._batch_size
 
@@ -60,6 +66,10 @@ class tf_FC(object):
         net = tf.nn.softmax(net)
         
         return net
+
+    """
+    Dataset iterator creation, training loop and also model summaries.
+    """
 
     def fit(self):
         
@@ -109,7 +119,7 @@ class tf_FC(object):
         ### Training loop
         itr_train = 0 
         itr_test = 0
-        test_every_epoch = 2
+        test_every_epoch = 1
         
         for epoch in range(self._num_epoch):
             
@@ -118,9 +128,9 @@ class tf_FC(object):
             
             for itr in range(self._itr_per_epoch_train):
             
-                _, _loss, acc, _image, _label, _summary = sess.run([self._train_op, self._loss, self._acc, image, label, merged])
+                _, _loss, acc, _image, _label, train_summary = sess.run([self._train_op, self._loss, self._acc, image, label, merged])
             
-                train_writer.add_summary(_summary, itr_train)
+                train_writer.add_summary(train_summary, itr_train)
                 itr_train = itr_train + 1
 
                 if itr % 10 == 0:
@@ -138,10 +148,9 @@ class tf_FC(object):
                 while(True):
                     
                     try:
-                        _loss, _acc, _image, _label, _summary = sess.run([self._loss, self._acc, image, label, merged])
+                        _loss, _acc, _image, _label, test_summary = sess.run([self._loss, self._acc, image, label, merged])
                         
-                        test_writer.add_summary(_summary, itr_train)
-                        itr_test = itr_test + 1
+                        test_writer.add_summary(test_summary, itr_train)
                         
                         test_loss.append(_loss)
                         test_acc.append(_acc)
@@ -159,11 +168,14 @@ class tf_FC(object):
                         break
                     
     
+
+def main(args):
+    tf_lin = tf_FC()
+    tf_lin.fit()
         
 
 if __name__ == "__main__":
-    
-    tf_lin = tf_FC()
-    tf_lin.fit()
+    tf.app.run(main=main)
+
     
     
